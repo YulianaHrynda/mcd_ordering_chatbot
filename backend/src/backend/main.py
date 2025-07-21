@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from backend.menu.loader import load_menus
 from backend.order_handler import process_user_message
+from backend.order_parser import parser_order
 
 app = FastAPI()
 
@@ -28,3 +29,8 @@ def get_menus():
 async def order(request: MessageRequest):
     reply = process_user_message(request.message)
     return {"response": reply}
+
+@app.post("/parse")
+async def parse(request: MessageRequest):
+    parsed = parser_order(request.message)
+    return {"parsed": parsed}
