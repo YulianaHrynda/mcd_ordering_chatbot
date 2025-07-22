@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from backend.menu.loader import load_menus
 from backend.order_handler import process_user_message
 from backend.order_parser import parser_order
+from backend.order_validator import validate_order
 
 app = FastAPI()
 
@@ -34,3 +35,9 @@ async def order(request: MessageRequest):
 async def parse(request: MessageRequest):
     parsed = parser_order(request.message)
     return {"parsed": parsed}
+
+@app.post("/order/validate")
+async def validate(request: MessageRequest):
+    parsed = parser_order(request.message)
+    validated = validate_order(parsed)
+    return validated
