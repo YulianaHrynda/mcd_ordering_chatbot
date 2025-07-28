@@ -15,5 +15,6 @@ for upsell in menus["upsells"]["items"]:
     PRICE_MAP[upsell["name"]] = upsell.get("price", 0.0)
 
 
-def get_price(name: str) -> float:
+def get_price(item_or_name) -> float:
+    name = item_or_name.name if hasattr(item_or_name, "name") else item_or_name
     return round(PRICE_MAP.get(name, 0.0), 2)

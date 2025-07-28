@@ -3,7 +3,7 @@ from typing import List, Literal, Dict
 
 def process_order_logic(order: dict, upsell_flags: Dict[str, bool]) -> dict:
     """
-    Приймає результат validate_order() і повертає system message + дії.
+    Accepts the result of validate_order() and returns a system message + actions.
     """
     system_message: str = ""
     actions: List[str] = []

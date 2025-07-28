@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # Base paths
     ROOT_DIR: Path = Path(__file__).resolve().parent.parent
     DATA_DIR: Path = ROOT_DIR / "data"
-    
+
     # OpenAI
     OPENAI_API_KEY: str
     OPENAI_MODEL: str = "gpt-4o-mini"
