@@ -5,9 +5,9 @@ Main module
 from fastapi import FastAPI
 from pydantic import BaseModel
 from backend.menu.loader import load_menus
-from backend.order_handler import process_user_message
-from backend.order_parser import parser_order
-from backend.order_validator import validate_order
+from backend.llm.order_handler import process_user_message
+from backend.llm.order_parser import parser_order
+from backend.logic.order_validator import validate_order
 
 app = FastAPI()
 
