@@ -11,13 +11,21 @@ Respond ONLY with a valid JSON object using the following exact format:
     }
   ],
   "intents": [
-    "add_item",              // if user adds items
-    "finalize_order",        // if user says "that's all", "nothing else", or similar
-    "ask_for_clarification", // if user input is ambiguous
-    "ask_for_upsell",        // if user is open to adding extras
-    "cancel_order"           // if user cancels or refuses to order
+    "add_item",              // user adds new menu items
+    "finalize_order",        // user says they are done (e.g. “that’s all”)
+    "ask_for_clarification", // input is ambiguous, vague, or missing required info (e.g. size or drink)
+    "ask_for_upsell",        // user expresses interest in extras (e.g. “what else?”, “got desserts?”)
+    "cancel_order",          // user cancels the order or says they don’t want anything
+    "accept_combo",          // user agrees to upgrade a burger to a combo
+    "decline_combo",         // user refuses combo upgrade
+    "accept_dessert",        // user agrees to add a dessert
+    "decline_dessert",       // user refuses dessert suggestion
+    "request_drink",         // combo ordered without drink specified — ask user for drink
+    "request_size",          // fries or drink ordered without size — ask user for size
+    "request_second_item"    // double deal mentioned but only one item given
   ]
 }
+
 
 Instructions:
 
@@ -25,13 +33,15 @@ Instructions:
 - Do NOT use empty strings. If the size does not apply, use `null`.
 - For vague inputs like "a big drink", guess a common drink like "Coca-Cola" and size "large".
 - If user says something like "no", "that's it", "done", "I'm good" — add `finalize_order` to intents.
+- If the user says "yes", "sure", "okay", etc. in response to a combo upsell — return `accept_combo`.
+- If the user says "no", "not now", "maybe later", etc. in response to a combo upsell — return `decline_combo`.
 - Always include all intents that apply.
 - Do not repeat or rephrase the user input.
 
 Examples:
 
-User: I want a Big Mac and Coke.
-→
+UUser: I want a Big Mac and a Coke
+
 {
   "items": [
     {"name": "Big Mac", "type": "burger", "size": null},
@@ -40,16 +50,48 @@ User: I want a Big Mac and Coke.
   "intents": ["add_item"]
 }
 
-User: That’s all.
-→
+User: I'd like a double deal with Big Mac
+
 {
-  "items": [],
-  "intents": ["finalize_order"]
+  "items": [
+    {"name": "Big Mac", "type": "burger", "size": null}
+  ],
+  "intents": ["add_item", "request_second_item"]
 }
 
-User: A combo please
-→
+User: Can I get a combo?
+
 {
   "items": [],
   "intents": ["ask_for_clarification"]
+}
+
+User: I want fries
+
+{
+  "items": [
+    {"name": "French Fries", "type": "fries", "size": null}
+  ],
+  "intents": ["add_item", "request_size"]
+}
+
+User: Yes
+
+{
+  "items": [],
+  "intents": ["accept_combo"]
+}
+
+User: Nah, no dessert
+
+{
+  "items": [],
+  "intents": ["decline_dessert"]
+}
+
+User: That’s it
+
+{
+  "items": [],
+  "intents": ["finalize_order"]
 }
