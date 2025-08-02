@@ -1,17 +1,20 @@
+# backend/chat/handlers/combo.py
+
 from typing import Dict, Optional
+from backend.chat.message_gen import generate_system_message
 from backend.llm.order_parser import parser_order
 from backend.logic.order_validator import validate_order
 from backend.menu.loader import load_menus
 from backend.menu.pricing import get_price
 from backend.logic.order_engine import process_order_logic
-# from backend.llm.schema import Item
 
-def handle(session: Dict, message: str, session_id: str) -> Optional[Dict]:
+async def handle(session: Dict, message: str, session_id: str) -> Optional[Dict]:
     """
-    Handle accept_combo and decline_combo intents:
+    Handle 'accept_combo' and 'decline_combo' intents with dynamic messaging:
     - accept_combo: upgrade a burger to a combo, seed pending_slots for drink/fries/sauces
-    - decline_combo: mark combo_offered and proceed with fallback logic
+    - decline_combo: mark combo_offered and generate the next prompt via OpenAI
     """
+    # 1) Parse & validate
     parsed = parser_order(message, history=session["history"])
     validated = validate_order(parsed)
     if not validated["is_valid"]:
@@ -19,8 +22,8 @@ def handle(session: Dict, message: str, session_id: str) -> Optional[Dict]:
 
     intents = validated["intents"]
 
-    if "accept_combo" in intents:
-        upgraded = False
+    # 2) ACCEPT COMBO
+    if "accept_combo" in intents or "request_drink" in intents:
         combo_item = None
         for it in session["order"]:
             if it.type == "burger":
@@ -28,59 +31,59 @@ def handle(session: Dict, message: str, session_id: str) -> Optional[Dict]:
                 it.name += " Meal" if "Meal" not in it.name else ""
                 it.price = get_price(it)
                 combo_item = it
-                upgraded = True
                 break
 
-        if not upgraded:
-            msg = "It looks like there’s no burger to upgrade to a combo. What else can I get you?"
-            session["history"].append({"role": "system", "content": msg})
-            return {"session_id": session_id, "response": msg, "finalized": False}
+        if combo_item is None:
+            prompt = "It doesn't look like you have a burger to turn into a combo. What else can I get for you?"
+            session["history"].append({"role": "system", "content": prompt})
+            return {"session_id": session_id, "response": prompt, "finalized": False}
 
         session["upsell_flags"]["combo_offered"] = True
 
-        menus = load_menus()
-        combo_cfg = next(c for c in menus["virtual_items"]["combos"] if c["name"] == combo_item.name)
+        # Prepare slots
+        menu = load_menus()
+        combo_cfg = next(c for c in menu["virtual_items"]["combos"] if c["name"] == combo_item.name)
         slots = combo_cfg["slots"]
+        default_side  = slots["fries"][0]
+        drink_opts    = slots["drinks"]
+        sauce_opts    = slots.get("sauces", {}).get("options", [])
 
-        default_side = slots["fries"][0]
-        drink_options = slots["drinks"]
-        sauce_options = slots.get("sauces", {}).get("options", [])
-
-        slot_order = ["drinks"]
-        if sauce_options:
-            slot_order.append("sauces")
-
+        seq = ["drinks"] + (["sauces"] if sauce_opts else [])
         session["pending_slots"] = {
-            "slot": slot_order[0],
-            "options": slots[slot_order[0]],
+            "slot": seq[0],
+            "options": slots[seq[0]],
             "combo": combo_item,
-            "remaining": slot_order[1:],
+            "remaining": seq[1:],
             "all": slots
         }
 
-        lines = [
-            f"Great choice! Your {combo_item.name} combo includes {default_side} by default.",
-            f"Which drink would you like? Options: {', '.join(drink_options)}"
-        ]
-        if sauce_options:
-            lines.append(f"After that, you can add a sauce (or say 'no' to skip): {', '.join(sauce_options)}")
-        msg = "\n".join(lines)
-
+        # Dynamic prompt
+        instruction = (
+            f"You are McBot, McDonald's assistant. The customer upgraded to a {combo_item.name} combo "
+            f"which includes {default_side} by default. Now ask which drink they'd like "
+            f"and list the options: {', '.join(drink_opts)}. "
+            f"If sauces are next, tell them they can skip by saying 'no'."
+        )
+        msg = await generate_system_message(session["history"], instruction)
         session["history"].append({"role": "system", "content": msg})
         return {"session_id": session_id, "response": msg, "finalized": False}
 
+    # 3) DECLINE COMBO
     if "decline_combo" in intents:
         session["upsell_flags"]["combo_offered"] = True
 
-        summary = "🧾 Current items:\n" + "\n".join(
-            f"- {it.name}: ${it.price:.2f}" for it in session["order"]
-        )
-        next_msg = process_order_logic(
-            {"items": session["order"], "intents": intents, "errors": [], "is_valid": True},
+        result = process_order_logic(
+            {"items": session["order"], "intents": [], "errors": [], "is_valid": True},
             session["upsell_flags"]
-        )["system_message"]
+        )
 
-        msg = f"No problem. Keeping your burger as-is.\n{summary}\n{next_msg}"
+        order_summary = ", ".join(f"{it.name} for ${it.price:.2f}" for it in session["order"])
+        instruction = (
+            f"You are McBot. The customer kept their burger as-is. "
+            f"Their order now: {order_summary}. "
+            f"Next, {result['system_message']}"
+        )
+        msg = await generate_system_message(session["history"], instruction)
         session["history"].append({"role": "system", "content": msg})
         return {"session_id": session_id, "response": msg, "finalized": False}
 

@@ -19,6 +19,9 @@ class OrderResponse(BaseModel):
         "accept_combo",
         "decline_combo",
         "accept_dessert",
-        "decline_dessert"
+        "decline_dessert",
+        "request_drink",
+        "request_size",
+        "request_sauce"
     ]] = Field(default_factory=list)
 

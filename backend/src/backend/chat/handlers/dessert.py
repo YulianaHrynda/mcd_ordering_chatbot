@@ -1,71 +1,106 @@
 # backend/chat/handlers/dessert.py
 
 from typing import Dict, Optional
+import re
+from backend.llm.schema import Item
+from backend.chat.message_gen import generate_system_message
 from backend.menu.loader import load_menus
-from backend.llm.order_parser import parser_order
-from backend.logic.order_validator import validate_order
 from backend.menu.pricing import get_price
 
-def handle(session: Dict, message: str, session_id: str) -> Optional[Dict]:
-    """
-    2A) Offer a dessert once per order if there's at least one burger/combo.
-    2B) Handle user's accept_dessert or decline_dessert intents, listing options correctly.
-    """
-    parsed = parser_order(message, history=session["history"])
-    validated = validate_order(parsed)
-    if not validated["is_valid"]:
-        return None
+# normalize helper
+def _normalize(text: str) -> str:
+    t = re.sub(r"[^\w\s]", " ", text).lower()
+    return re.sub(r"\s+", " ", t).strip()
 
-    new_items = validated["items"]
-    intents   = validated["intents"]
+# same dessert synonyms
+_MANUAL_DESSERT_SYNONYMS = {
+    "apple pie": "Apple Pie",
+    "oreomacflurry": "McFlurry with Oreo",
+    "m&m's mcflurry": "McFlurry with M&M's",
+    "soft serve": "Soft Serve Cone",
+    "soft serve cone": "Soft Serve Cone",
+    "cookie": "Chocolate Chip Cookie",
+    "chocolate chip cookie": "Chocolate Chip Cookie",
+    "sundae": "Sundae",
+}
 
+def _all_menu_items():
     menu = load_menus()
-    raw_items = menu.get("items", [])
+    flat = []
+    for v in menu.values():
+        if isinstance(v, list):
+            flat.extend(v)
+        elif isinstance(v, dict):
+            for vv in v.values():
+                if isinstance(vv, list):
+                    flat.extend(vv)
+    return flat
 
-    if isinstance(raw_items, dict):
-        desserts_list = raw_items.get("desserts", [])
-    else:
-        desserts_list = [itm for itm in raw_items if itm.get("category") == "desserts"]
-
-    dessert_names = [itm["name"] for itm in desserts_list]
-
-    has_eats = any(it.type in ("burger","combo") for it in session["order"])
-    if has_eats and not session["upsell_flags"].get("dessert_offered"):
-        session["upsell_flags"]["dessert_offered"] = True
-        msg = (
-            "Would you like to add a dessert? "
-            "Here are our options: " + ", ".join(dessert_names)
-        )
-        session["history"].append({"role": "system", "content": msg})
-        return {"session_id": session_id, "response": msg, "finalized": False}
-
-    if "accept_dessert" in intents:
-        dessert_item = next((i for i in new_items if i.type == "dessert"), None)
-        if not dessert_item:
-            msg = (
-                "Sure! Which dessert would you like? "
-                "Options: " + ", ".join(dessert_names)
+async def handle(session: Dict, message: str, session_id: str) -> Optional[Dict]:
+    # 1) First‐time offer
+    if not session["upsell_flags"].get("dessert_offered_done"):
+        if any(it.type in ("burger","combo") for it in session["order"]):
+            session["upsell_flags"]["dessert_offered_done"] = True
+            desserts = [i["name"] for i in _all_menu_items() if i.get("category")=="desserts"]
+            instruction = (
+                "You are McBot. Suggest a dessert upsell, listing each option: "
+                + ", ".join(desserts)
             )
-            session["history"].append({"role": "system", "content": msg})
-            return {"session_id": session_id, "response": msg, "finalized": False}
+            prompt = await generate_system_message(session["history"], instruction)
+            session["history"].append({"role":"system","content":prompt})
+            return {"session_id": session_id, "response": prompt, "finalized": False}
 
-        dessert_item.price = get_price(dessert_item)
-        session["order"].append(dessert_item)
+    # 2) Parse or fallback match
+    from backend.llm.order_parser import parser_order
+    parsed = None
+    try:
+        parsed = parser_order(message, history=session["history"])
+    except:
+        parsed = None
 
-        summary = "Current items:\n" + "\n".join(
-            f"- {it.name}: ${it.price:.2f}" for it in session["order"]
+    # 2A) If parser really parsed a dessert, add it
+    if parsed:
+        new_d = [i for i in parsed.items if i.type=="dessert"]
+        if new_d:
+            d = new_d[0]
+            canon = _MANUAL_DESSERT_SYNONYMS.get(d.name.lower(), d.name)
+            itm = Item(name=canon, type="dessert", size=None)
+            itm.price = get_price(itm)
+            session["order"].append(itm)
+            summary = "🧾 Current items:\n" + "\n".join(f"- {it.name}: ${it.price:.2f}" for it in session["order"])
+            instruction = (
+                f"You added {itm.name} (${itm.price:.2f}). Here’s the order so far: {summary}. "
+                "Ask if they’d like anything else."
+            )
+            prompt = await generate_system_message(session["history"], instruction)
+            session["history"].append({"role":"system","content":prompt})
+            return {"session_id": session_id, "response": prompt, "finalized": False}
+
+    # 2B) Fuzzy‐match free text
+    desserts = [i["name"] for i in _all_menu_items() if i.get("category")=="desserts"]
+    norm = _normalize(message)
+    lookup = { _normalize(d): d for d in desserts }
+    lookup.update(_MANUAL_DESSERT_SYNONYMS)
+    chosen = lookup.get(norm)
+    if chosen:
+        itm = Item(name=chosen, type="dessert", size=None)
+        itm.price = get_price(itm)
+        session["order"].append(itm)
+        summary = "🧾 Current items:\n" + "\n".join(f"- {it.name}: ${it.price:.2f}" for it in session["order"])
+        instruction = (
+            f"You added {itm.name} (${itm.price:.2f}). Here’s the order so far: {summary}. "
+            "Ask if they’d like anything else."
         )
-        msg = (
-            f"Great! I've added {dessert_item.name} at ${dessert_item.price:.2f}.\n"
-            f"{summary}\n"
-            "Is there anything else you'd like?"
-        )
-        session["history"].append({"role": "system", "content": msg})
-        return {"session_id": session_id, "response": msg, "finalized": False}
+        prompt = await generate_system_message(session["history"], instruction)
+        session["history"].append({"role":"system","content":prompt})
+        return {"session_id": session_id, "response": prompt, "finalized": False}
 
-    if "decline_dessert" in intents:
-        msg = "No problem—no dessert. Is there anything else you'd like?"
-        session["history"].append({"role": "system", "content": msg})
-        return {"session_id": session_id, "response": msg, "finalized": False}
-
-    return None
+    # 3) Didn’t catch it—ask again
+    desserts = [i["name"] for i in _all_menu_items() if i.get("category")=="desserts"]
+    instruction = (
+        "You are McBot. The customer’s dessert choice was unclear. "
+        "Please ask which dessert they’d like, listing options: " + ", ".join(desserts)
+    )
+    prompt = await generate_system_message(session["history"], instruction)
+    session["history"].append({"role":"system","content":prompt})
+    return {"session_id": session_id, "response": prompt, "finalized": False}
